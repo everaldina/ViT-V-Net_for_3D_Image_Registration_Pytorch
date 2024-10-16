@@ -26,6 +26,10 @@ FC_1 = "MlpBlock_3/Dense_1"
 ATTENTION_NORM = "LayerNorm_0"
 MLP_NORM = "LayerNorm_2"
 
+CONFIGS = {
+    'ViT-V-Net': configs.get_3DReg_config(),
+}
+
 
 def np2th(weights, conv=False):
     """Possibly convert HWIO to OIHW."""
@@ -36,7 +40,6 @@ def np2th(weights, conv=False):
 
 def swish(x):
     return x * torch.sigmoid(x)
-
 
 ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu, "swish": swish}
 
@@ -447,6 +450,3 @@ class VecInt(nn.Module):
             vec = vec + self.transformer(vec, vec)
         return vec
 
-CONFIGS = {
-    'ViT-V-Net': configs.get_3DReg_config(),
-}

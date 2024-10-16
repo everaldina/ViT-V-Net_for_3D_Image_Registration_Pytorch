@@ -42,9 +42,12 @@ def main():
     max_epoch = 500
     cont_training = False
     config_vit = CONFIGS_ViT_seg['ViT-V-Net']
-    reg_model = utils.register_model((160, 192, 224), 'nearest')
+    img_size = (160, 192, 224)
+    
+    reg_model = utils.register_model(img_size, 'nearest')
     reg_model.cuda()
-    model = models.ViTVNet(config_vit, img_size=(160, 192, 224))
+    model = models.ViTVNet(config_vit, img_size=img_size)
+    
     if cont_training:
         epoch_start = 335
         model_dir = 'experiments/'+save_dir
@@ -52,8 +55,9 @@ def main():
         best_model = torch.load(model_dir + natsorted(os.listdir(model_dir))[0])['state_dict']
         model.load_state_dict(best_model)
     else:
-        updated_lr = lr
+        updated_lr = lr 
     model.cuda()
+    
     train_composed = transforms.Compose([trans.RandomFlip(0),
                                          trans.NumpyType((np.float32, np.float32)),
                                          ])
@@ -71,11 +75,13 @@ def main():
     criterion = nn.MSELoss()
     criterions = [criterion]
     weights = [1]
+    
     # prepare deformation loss
     criterions += [losses.Grad3d(penalty='l2')]
     weights += [0.02]
     best_mse = 0
     writer = SummaryWriter(log_dir='ViTVNet_log')
+    
     for epoch in range(epoch_start, max_epoch):
         print('Training Starts')
         '''
@@ -92,6 +98,7 @@ def main():
             y = data[1]
             x_in = torch.cat((x,y), dim=1)
             output = model(x_in)
+            
             loss = 0
             loss_vals = []
             for n, loss_function in enumerate(criterions):
@@ -144,6 +151,7 @@ def main():
                 dsc = utils.dice_val(def_out.long(), y_seg.long(), 46)
                 eval_dsc.update(dsc.item(), x.size(0))
                 print(eval_dsc.avg)
+                
         best_mse = max(eval_dsc.avg, best_mse)
         save_checkpoint({
             'epoch': epoch + 1,
