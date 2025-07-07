@@ -2,6 +2,7 @@ import random
 import pickle
 import numpy as np
 import torch
+import SimpleITK as sitk
 
 M = 2 ** 32 - 1
 
@@ -36,6 +37,10 @@ def sample(x, size):
 def pkload(fname):
     with open(fname, 'rb') as f:
         return pickle.load(f)
+    
+def stik_load(fname):
+    image = sitk.ReadImage(fname)
+    return sitk.GetArrayFromImage(image)
 
 
 _shape = (240, 240, 155)

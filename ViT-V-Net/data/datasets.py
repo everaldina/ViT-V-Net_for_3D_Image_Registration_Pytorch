@@ -1,10 +1,81 @@
 import os, glob
 import torch, sys
 from torch.utils.data import Dataset
-from .data_utils import pkload
+from .data_utils import pkload, stik_load
 import matplotlib.pyplot as plt
+from utils import zoom_img, reduce_image
 
 import numpy as np
+
+
+class OrcaScoreData(Dataset):
+    def __init__(self, data_path, y_shape = (64, 512, 512), output_size = (64, 512, 512), image_type = 'normal', reshape_mode='zoom', extension='nib'):
+        self.paths = data_path
+        self.y_shape = y_shape
+        self.output_size = output_size
+        self.reshape_mode = reshape_mode
+        self.image_type = image_type
+        self.extension = extension
+
+    def __getitem__(self, index):
+        path = self.paths[index]
+        id = path.split('/')[-1].split('.')[0]
+        
+        
+        if self.extension == 'nib':
+            x = stik_load(path)
+
+            x = np.rot90(x, 2, axes=(1, 2))
+            x = np.flip(x, axis=2)
+        elif self.extension == 'pkl':
+            x = pkload(path)
+        
+        
+        
+        match self.image_type:
+            case 'normal':
+                if self.reshape_mode == 'zoom':
+                    x = zoom_img(x, self.output_size)
+                elif self.reshape_mode == 'reduce':
+                    x = reduce_image(x, self.output_size)
+            case 'transformed':
+                if self.reshape_mode == 'zoom':
+                    x = zoom_img(x, self.y_shape[index])
+                elif self.reshape_mode == 'reduce':
+                    x = reduce_image(x, self.y_shape[index])
+                x = zoom_img(x, self.output_size)
+            case _:
+                x = zoom_img(x, self.output_size)
+        x = x[None, ...]
+        x = x.astype(np.float32)
+        x = np.ascontiguousarray(x)# [Bsize,channelsHeight,,Width,Depth]
+        x = torch.from_numpy(x)
+        return {'x': x, 'id': id}
+
+    def __len__(self):
+        return len(self.paths)
+    
+
+class OrcaScoreDataset(Dataset):
+    def __init__(self, data_path, transforms, output_size):
+        self.paths = data_path
+        self.transforms = transforms
+        self.output_size = output_size
+
+    def __getitem__(self, index):
+        path = self.paths[index]
+        x, y = pkload(path)
+        x = zoom_img(x, self.output_size)
+        y = zoom_img(y, self.output_size)
+        x, y = x[None, ...], y[None, ...]
+        x,y = self.transforms([x, y])
+        x = np.ascontiguousarray(x)# [Bsize,channelsHeight,,Width,Depth]
+        y = np.ascontiguousarray(y)
+        x, y = torch.from_numpy(x), torch.from_numpy(y)
+        return x, y
+
+    def __len__(self):
+        return len(self.paths)
 
 
 class JHUBrainDataset(Dataset):

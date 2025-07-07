@@ -11,6 +11,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 from models import CONFIGS as CONFIGS_ViT_seg
 from natsort import natsorted
+import argparse
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -32,26 +33,42 @@ class AverageMeter(object):
 def MSE_torch(x, y):
     return torch.mean((x - y) ** 2)
 
+def args_input():
+    parser = argparse.ArgumentParser(description='ViT-V-Net')
+    parser.add_argument('--train_dir', type=str, default='/vit-v-net/train/', help='training data directory')
+    parser.add_argument('--save_dir', type=str, default='vit-v-net', help='save directory')
+    parser.add_argument('--log_name', type=str, default='vit-v-net_log', help='log name')
+    parser.add_argument('--lr', type=float, default=0.0001, help='learning rate')
+    parser.add_argument('--batch_size', type=int, default=2, help='batch size')
+    parser.add_argument('--max_epoch', type=int, default=500, help='max epoch')
+    parser.add_argument('--cont_training', action='store_true', help='continue training')
+    parser.add_argument('--epoch_start', type=int, default=0, help='epoch start')
+    
+    return parser.parse_args()
+    
+
 def main():
-    batch_size = 2
-    train_dir = 'D:/DATA/JHUBrain/Train/'
-    val_dir = 'D:/DATA/JHUBrain/Val/'
-    save_dir = 'ViTVNet_reg0.02_mse_diff/'
-    lr = 0.0001
-    epoch_start = 0
-    max_epoch = 500
-    cont_training = False
+    args = args_input()
+    batch_size = args.batch_size
+    train_dir = args.train_dir
+    #val_dir = 'D:/DATA/JHUBrain/Val/'
+    save_dir = args.save_dir
+    log_name = args.log_name
+    lr = args.lr
+    epoch_start = args.epoch_start
+    max_epoch = args.max_epoch
+    cont_training = args.cont_training
     config_vit = CONFIGS_ViT_seg['ViT-V-Net']
-    img_size = (160, 192, 224)
+    img_size = (64, 512, 512)
     
     reg_model = utils.register_model(img_size, 'nearest')
     reg_model.cuda()
     model = models.ViTVNet(config_vit, img_size=img_size)
     
     if cont_training:
-        epoch_start = 335
+        epoch_start = args.epoch_start
         model_dir = 'experiments/'+save_dir
-        updated_lr = round(lr * np.power(1 - (epoch_start) / max_epoch,0.9),8)
+        updated_lr = round(lr * np.power(1 - (epoch_start) / max_epoch,0.9), 8)
         best_model = torch.load(model_dir + natsorted(os.listdir(model_dir))[0])['state_dict']
         model.load_state_dict(best_model)
     else:
@@ -62,14 +79,15 @@ def main():
                                          trans.NumpyType((np.float32, np.float32)),
                                          ])
 
-    val_composed = transforms.Compose([trans.Seg_norm(), #rearrange segmentation label to 1 to 46
-                                       trans.NumpyType((np.float32, np.int16)),
-                                        ])
+    # val_composed = transforms.Compose([trans.Seg_norm(), #rearrange segmentation label to 1 to 46
+    #                                    trans.NumpyType((np.float32, np.int16)),
+    #                                     ])
 
-    train_set = datasets.JHUBrainDataset(glob.glob(train_dir + '*.pkl'), transforms=train_composed)
-    val_set = datasets.JHUBrainInferDataset(glob.glob(val_dir + '*.pkl'), transforms=val_composed)
+    train_set = datasets.OrcaScoreDataset(glob.glob(train_dir + '*.pkl'), transforms=train_composed, output_size=img_size)
+    print(glob.glob(train_dir + '*.pkl'))
+    # val_set = datasets.JHUBrainInferDataset(glob.glob(val_dir + '*.pkl'), transforms=val_composed)
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
+    # val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=4, pin_memory=True, drop_last=True)
 
     optimizer = optim.Adam(model.parameters(), lr=updated_lr, weight_decay=0, amsgrad=True)
     criterion = nn.MSELoss()
@@ -80,7 +98,7 @@ def main():
     criterions += [losses.Grad3d(penalty='l2')]
     weights += [0.02]
     best_mse = 0
-    writer = SummaryWriter(log_dir='ViTVNet_log')
+    writer = SummaryWriter(log_dir=log_name)
     
     for epoch in range(epoch_start, max_epoch):
         print('Training Starts')
@@ -128,48 +146,51 @@ def main():
             optimizer.step()
 
             print('Iter {} of {} loss {:.4f}, Img Sim: {:.6f}, Reg: {:.6f}'.format(idx, len(train_loader), loss.item(), loss_vals[0].item()/2, loss_vals[1].item()/2))
+        best_mse = max(loss_all.avg, best_mse)
 
         writer.add_scalar('Loss/train', loss_all.avg, epoch)
         print('Epoch {} loss {:.4f}'.format(epoch, loss_all.avg))
+        
         '''
         Validation
         '''
-        eval_dsc = AverageMeter()
-        with torch.no_grad():
-            for data in val_loader:
-                model.eval()
-                data = [t.cuda() for t in data]
-                x = data[0]
-                y = data[1]
-                x_seg = data[2]
-                y_seg = data[3]
-                # x = x.squeeze(0).permute(1, 0, 2, 3)
-                # y = y.squeeze(0).permute(1, 0, 2, 3)
-                x_in = torch.cat((x, y), dim=1)
-                output = model(x_in)
-                def_out = reg_model([x_seg.cuda().float(), output[1].cuda()])
-                dsc = utils.dice_val(def_out.long(), y_seg.long(), 46)
-                eval_dsc.update(dsc.item(), x.size(0))
-                print(eval_dsc.avg)
+        # eval_dsc = AverageMeter()
+        # with torch.no_grad():
+        #     for data in val_loader:
+        #         model.eval()
+        #         data = [t.cuda() for t in data]
+        #         x = data[0]
+        #         y = data[1]
+        #         x_seg = data[2]
+        #         y_seg = data[3]
+        #         # x = x.squeeze(0).permute(1, 0, 2, 3)
+        #         # y = y.squeeze(0).permute(1, 0, 2, 3)
+        #         x_in = torch.cat((x, y), dim=1)
+        #         output = model(x_in)
+        #         def_out = reg_model([x_seg.cuda().float(), output[1].cuda()])
+        #         dsc = utils.dice_val(def_out.long(), y_seg.long(), 46)
+        #         eval_dsc.update(dsc.item(), x.size(0))
+        #         print(eval_dsc.avg)
                 
-        best_mse = max(eval_dsc.avg, best_mse)
+        # best_mse = max(eval_dsc.avg, best_mse)
+        
         save_checkpoint({
             'epoch': epoch + 1,
             'state_dict': model.state_dict(),
             'best_mse': best_mse,
             'optimizer': optimizer.state_dict(),
-        }, save_dir='experiments/'+save_dir, filename='dsc{:.3f}.pth.tar'.format(eval_dsc.avg))
-        writer.add_scalar('MSE/validate', eval_dsc.avg, epoch)
-        plt.switch_backend('agg')
-        pred_fig = comput_fig(def_out)
-        x_fig = comput_fig(x_seg)
-        tar_fig = comput_fig(y_seg)
-        writer.add_figure('input', x_fig, epoch)
-        plt.close(x_fig)
-        writer.add_figure('ground truth', tar_fig, epoch)
-        plt.close(tar_fig)
-        writer.add_figure('prediction', pred_fig, epoch)
-        plt.close(pred_fig)
+        }, save_dir='experiments/'+save_dir, filename='dsc{:.3f}.pth.tar'.format(loss_all.avg))
+        # writer.add_scalar('MSE/train', loss_all.avg, epoch)
+        # plt.switch_backend('agg')
+        # pred_fig = comput_fig(def_out)
+        # x_fig = comput_fig(x_seg)
+        # tar_fig = comput_fig(y_seg)
+        # writer.add_figure('input', x_fig, epoch)
+        # plt.close(x_fig)
+        # writer.add_figure('ground truth', tar_fig, epoch)
+        # plt.close(tar_fig)
+        # writer.add_figure('prediction', pred_fig, epoch)
+        # plt.close(pred_fig)
         loss_all.reset()
     writer.close()
 
@@ -185,10 +206,12 @@ def comput_fig(img):
 
 def adjust_learning_rate(optimizer, epoch, MAX_EPOCHES, INIT_LR, power=0.9):
     for param_group in optimizer.param_groups:
-        param_group['lr'] = round(INIT_LR * np.power( 1 - (epoch) / MAX_EPOCHES ,power),8)
+        param_group['lr'] = round(INIT_LR * np.power( 1 - (epoch) / MAX_EPOCHES ,power), 8)
 
 
 def save_checkpoint(state, save_dir='models', filename='checkpoint.pth.tar', max_model_num=8):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
     torch.save(state, save_dir+filename)
     model_lists = natsorted(glob.glob(save_dir + '*'))
     while len(model_lists) > max_model_num:

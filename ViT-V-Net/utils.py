@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch, sys
 from torch import nn
 import pystrum.pynd.ndutils as nd
+from scipy.ndimage.interpolation import zoom
 
 def sliding_predict(model, image, tile_size, n_dims, overlap=1/2, flip=False):
     image_size = image.shape
@@ -211,4 +212,20 @@ def dice_val_substruct(y_pred, y_true, std_idx):
         dsc = (2.*intersection) / (union + 1e-5)
         line = line+','+str(dsc)
     return line
+
+
+def zoom_img(image, output_shape, order=0):
+    s = (output_shape[0] / image.shape[0], output_shape[1] / image.shape[1], output_shape[2] / image.shape[2])
+    new_img = zoom(image, zoom=s, order=order)
+
+    return new_img
+
+def reduce_image(image, output_shape):
+    slices_out = output_shape[0]
+    sSize = image.shape[0] // slices_out
+    
+    new_img = np.zeros(output_shape)
+    for i in range(slices_out):
+        new_img[i, :, :] = np.logical_or.reduce(image[int(i*sSize):int((i+1)*sSize), :, :], axis=0)
+    return new_img
 
